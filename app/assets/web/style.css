@@ -560,3 +560,8 @@ table.dl .pct { font-size: 11px; color: var(--text-3); }
 .pc-item .tag.off { background: #fde8e8; color: #c62f34; }
 .pc-drop { margin: 10px 14px; padding: 18px; border: 2px dashed var(--line); border-radius: 12px; text-align: center; color: var(--text-3); }
 .pc-drop.drag { border-color: var(--accent); background: rgba(30,111,217,.06); color: var(--accent); }
+
+/* login: username/password fields use normal (non-PIN) styling */
+.login-card input#loginUser, .login-card input#loginPass {
+  text-align: left; font-size: 16px; letter-spacing: normal; height: 44px; margin-top: 10px; padding: 0 14px;
+}

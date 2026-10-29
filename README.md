@@ -57,7 +57,7 @@ root prompt.
 - **System widgets** — System Health, Resource Monitor (CPU/RAM/network),
   Storage, battery.
 - Reachable at `nexshare.local` via a built-in mDNS responder, with IP fallback.
-  Optional 6-digit PIN login.
+  Choose your login mode: none, a random 6-digit PIN, or username + password.
 
 ## Download
 

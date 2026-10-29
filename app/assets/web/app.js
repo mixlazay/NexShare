@@ -259,7 +259,7 @@ function fileIcon(kind) {
 
 // ---------------------------------------------------------------- state
 
-const State = { roots: [], sys: null, notes: [], clipboard: null, isRoot: false, flavor: 'normal' };
+const State = { roots: [], sys: null, notes: [], clipboard: null, isRoot: false, flavor: 'normal', authMode: 'pin' };
 
 function rootOf(p) {
   let best = null;
@@ -1033,7 +1033,7 @@ function ControlPanel(body) {
         el('dt', { text: 'เปิดเครื่องมาแล้ว' }), el('dd', { text: s.uptime ? fmtUptime(s.uptime) : '-' }))),
       el('div', { class: 'card' }, el('h3', { text: 'การเข้าถึงจากเครื่องอื่น', style: { marginTop: 0 } }), el('dl', { class: 'kv' },
         ...urls.flatMap((u, i) => [el('dt', { text: i ? 'ผ่าน IP' : 'Local domain' }), el('dd', { class: 'mono', text: u })]),
-        el('dt', { text: 'ความปลอดภัย' }), el('dd', { text: Auth.pinRequired ? 'ต้องใส่ PIN' : 'ไม่ใช้ PIN' }))),
+        el('dt', { text: 'ความปลอดภัย' }), el('dd', { text: State.authMode === 'password' ? 'ชื่อผู้ใช้ + รหัสผ่าน' : State.authMode === 'pin' ? 'ต้องใส่ PIN' : 'ไม่ต้องล็อกอิน' }))),
       el('div', { class: 'card' }, el('h3', { text: 'ที่เก็บข้อมูล', style: { marginTop: 0 } }),
         ...State.roots.map(r => el('div', { class: 'meter' },
           el('div', { class: 'row' }, el('span', { text: r.name }), el('b', { text: r.total ? `${fmtSize(r.total - r.free)} / ${fmtSize(r.total)}` : '-' })),
@@ -2196,9 +2196,18 @@ function RemoteAccess(body, win) {
 
 const Auth = {
   pinRequired: null,
+  mode: 'pin',
+  applyMode() {
+    const pw = this.mode === 'password';
+    $('#pin').classList.toggle('hidden', pw);
+    $('#loginUser').classList.toggle('hidden', !pw);
+    $('#loginPass').classList.toggle('hidden', !pw);
+    $('#loginServer').textContent = pw ? 'เข้าสู่ระบบด้วยชื่อผู้ใช้และรหัสผ่าน' : 'ใส่ PIN ที่แสดงในแอปบนมือถือ';
+  },
   show() {
+    this.applyMode();
     $('#login').classList.remove('hidden');
-    setTimeout(() => $('#pin').focus(), 50);
+    setTimeout(() => (this.mode === 'password' ? $('#loginUser') : $('#pin')).focus(), 50);
   },
   async logout() {
     try { await api('logout', null, { method: 'POST' }); } catch { /* ignore */ }
@@ -2210,14 +2219,18 @@ $('#loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const err = $('#loginErr');
   err.textContent = '';
+  const body = Auth.mode === 'password'
+    ? { username: $('#loginUser').value, password: $('#loginPass').value }
+    : { pin: $('#pin').value };
   try {
-    await api('login', null, { method: 'POST', body: JSON.stringify({ pin: $('#pin').value }) });
+    await api('login', null, { method: 'POST', body: JSON.stringify(body) });
     $('#login').classList.add('hidden');
-    $('#pin').value = '';
+    $('#pin').value = $('#loginPass').value = '';
     start();
   } catch (x) {
-    err.textContent = x.status === 429 ? 'ใส่ผิดหลายครั้ง รอ 1 นาทีแล้วลองใหม่' : 'PIN ไม่ถูกต้อง';
-    $('#pin').select();
+    err.textContent = x.status === 429 ? 'ใส่ผิดหลายครั้ง รอ 1 นาทีแล้วลองใหม่'
+      : Auth.mode === 'password' ? 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' : 'PIN ไม่ถูกต้อง';
+    (Auth.mode === 'password' ? $('#loginPass') : $('#pin')).select();
   }
 });
 
@@ -2277,9 +2290,10 @@ async function start() {
   try {
     const s = await api('session');
     Auth.pinRequired = s.pinRequired;
+    Auth.mode = s.authMode || 'pin';
+    State.authMode = Auth.mode;
     State.flavor = s.flavor || 'normal';
     State.isRoot = !!s.root;
-    $('#loginServer').textContent = (s.server ? s.server + ' · ' : '') + 'ใส่ PIN ที่แสดงในแอปบนมือถือ';
     if (!s.auth) { Auth.show(); return; }
     start();
   } catch { toast('เชื่อมต่อมือถือไม่ได้'); }

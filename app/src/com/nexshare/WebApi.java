@@ -85,7 +85,9 @@ public class WebApi implements HttpServer.Handler {
         if (p.equals("/api/session")) {
             JSONObject o = new JSONObject();
             put(o, "auth", authorized(req));
-            put(o, "pinRequired", Settings.pinEnabled(ctx));
+            put(o, "pinRequired", Settings.authRequired(ctx));
+            put(o, "authMode", Settings.authMode(ctx));
+            put(o, "username", Settings.username(ctx));
             put(o, "server", Build.MODEL);
             put(o, "flavor", Flavor.ROOT ? "root" : "normal");
             put(o, "version", Flavor.VERSION);
@@ -131,7 +133,7 @@ public class WebApi implements HttpServer.Handler {
     // ---------- auth ----------
 
     private boolean authorized(HttpServer.Request req) {
-        if (!Settings.pinEnabled(ctx)) return true;
+        if (!Settings.authRequired(ctx)) return true;
         String t = req.cookie("ns_token");
         return t != null && tokens.contains(t);
     }
@@ -143,14 +145,22 @@ public class WebApi implements HttpServer.Handler {
             res.error(429, "locked");
             return;
         }
-        String pin;
+        JSONObject body;
         try {
-            pin = new JSONObject(req.bodyString(4096)).optString("pin");
+            body = new JSONObject(req.bodyString(4096));
         } catch (Exception e) {
             res.error(400, "bad request");
             return;
         }
-        if (Settings.pinEnabled(ctx) && !Settings.pin(ctx).equals(pin.trim())) {
+        String mode = Settings.authMode(ctx);
+        boolean ok;
+        if (Settings.MODE_PASSWORD.equals(mode)) {
+            ok = body.optString("username").trim().equals(Settings.username(ctx))
+                && Settings.checkPassword(ctx, body.optString("password"));
+        } else { // pin (or none, which is already allowed by authorized())
+            ok = Settings.pin(ctx).equals(body.optString("pin").trim());
+        }
+        if (!ok) {
             if (f == null) f = new int[2];
             f[0]++;
             if (f[0] >= 5) {
@@ -158,7 +168,7 @@ public class WebApi implements HttpServer.Handler {
                 f[1] = now + 60;
             }
             failures.put(req.remote, f);
-            res.error(401, "wrong pin");
+            res.error(401, Settings.MODE_PASSWORD.equals(mode) ? "ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง" : "wrong pin");
             return;
         }
         failures.remove(req.remote);

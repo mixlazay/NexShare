@@ -17,10 +17,14 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings.Secure;
+import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -31,9 +35,10 @@ import java.net.Inet4Address;
 public class MainActivity extends Activity {
 
     private static final int BLUE = 0xFF1E6FD9;
-    private TextView status, urlHost, urlIp, pinView, permNote;
+    private TextView status, urlHost, urlIp, permNote;
     private Button toggle, permBtn;
-    private Switch pinSwitch;
+    private RadioGroup authGroup;
+    private LinearLayout authDetail;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable tick = new Runnable() {
         public void run() {
@@ -96,29 +101,32 @@ public class MainActivity extends Activity {
         hint.setPadding(0, dp(8), 0, 0);
         card.addView(hint);
 
-        LinearLayout pinCard = card(body);
-        pinSwitch = new Switch(this);
-        pinSwitch.setText("ต้องใส่ PIN ก่อนเข้า");
-        pinSwitch.setTextSize(15);
-        pinSwitch.setChecked(Settings.pinEnabled(this));
-        pinSwitch.setOnCheckedChangeListener((v, on) -> {
-            Settings.setPinEnabled(this, on);
-            refresh();
+        LinearLayout authCard = card(body);
+        authCard.addView(text("วิธีเข้าสู่ระบบ (ล็อกอิน)", 15, 0xFF1D2733, true));
+        authGroup = new RadioGroup(this);
+        String[] modes = {Settings.MODE_PIN, Settings.MODE_PASSWORD, Settings.MODE_NONE};
+        String[] labels = {"PIN สุ่ม 6 หลัก", "ชื่อผู้ใช้ + รหัสผ่าน", "ไม่ต้องล็อกอิน"};
+        for (int i = 0; i < modes.length; i++) {
+            RadioButton rb = new RadioButton(this);
+            rb.setText(labels[i]);
+            rb.setTextSize(15);
+            rb.setId(View.generateViewId());
+            rb.setTag(modes[i]);
+            rb.setChecked(modes[i].equals(Settings.authMode(this)));
+            authGroup.addView(rb);
+        }
+        authGroup.setOnCheckedChangeListener((g, id) -> {
+            View rb = g.findViewById(id);
+            if (rb == null) return;
+            Settings.setAuthMode(this, (String) rb.getTag());
+            applyAuthMode();
+            if (ServerService.running) startServer(); // re-apply (tunnel may force auth)
         });
-        pinCard.addView(pinSwitch);
-        pinView = text("", 34, 0xFF1D2733, true);
-        pinView.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        pinView.setLetterSpacing(0.15f);
-        pinView.setPadding(0, dp(8), 0, dp(4));
-        pinCard.addView(pinView);
-        Button newPin = new Button(this);
-        newPin.setAllCaps(false);
-        newPin.setText("สุ่ม PIN ใหม่");
-        newPin.setOnClickListener(v -> {
-            Settings.regeneratePin(this);
-            refresh();
-        });
-        pinCard.addView(newPin);
+        authCard.addView(authGroup);
+        authDetail = new LinearLayout(this);
+        authDetail.setOrientation(LinearLayout.VERTICAL);
+        authDetail.setPadding(0, dp(8), 0, 0);
+        authCard.addView(authDetail);
 
         LinearLayout screenCard = card(body);
         Switch screenSwitch = new Switch(this);
@@ -162,6 +170,7 @@ public class MainActivity extends Activity {
             }).start();
         }
 
+        applyAuthMode();
         applyKeepScreen();
         setContentView(scroll);
 
@@ -185,6 +194,66 @@ public class MainActivity extends Activity {
     }
 
     private boolean startedOnce;
+
+    /** Rebuilds the login-mode detail area. Not called from the periodic refresh (keeps text fields stable). */
+    private void applyAuthMode() {
+        authDetail.removeAllViews();
+        String mode = Settings.authMode(this);
+        if (Settings.MODE_PIN.equals(mode)) {
+            TextView pin = text(Settings.pin(this), 34, 0xFF1D2733, true);
+            pin.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+            pin.setLetterSpacing(0.15f);
+            pin.setPadding(0, dp(4), 0, dp(4));
+            authDetail.addView(pin);
+            Button newPin = new Button(this);
+            newPin.setAllCaps(false);
+            newPin.setText("สุ่ม PIN ใหม่");
+            newPin.setOnClickListener(v -> applyAuthModeAfter(() -> Settings.regeneratePin(this)));
+            authDetail.addView(newPin);
+            authDetail.addView(text("ใส่ PIN นี้ตอนเปิดหน้าเว็บจากเครื่องอื่น", 12, 0xFF8A96A3, false));
+        } else if (Settings.MODE_PASSWORD.equals(mode)) {
+            EditText user = new EditText(this);
+            user.setHint("ชื่อผู้ใช้");
+            user.setText(Settings.username(this));
+            user.setTextSize(15);
+            user.setSingleLine(true);
+            authDetail.addView(user);
+            EditText pass = new EditText(this);
+            pass.setHint(Settings.hasPassword(this) ? "รหัสผ่านใหม่ (เว้นว่าง = ไม่เปลี่ยน)" : "ตั้งรหัสผ่าน");
+            pass.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            pass.setTextSize(15);
+            pass.setSingleLine(true);
+            authDetail.addView(pass);
+            TextView st = text("", 13, 0xFF2FB36B, false);
+            st.setPadding(0, dp(6), 0, 0);
+            Button save = new Button(this);
+            save.setAllCaps(false);
+            save.setText("บันทึก");
+            save.setOnClickListener(v -> {
+                Settings.setUsername(this, user.getText().toString());
+                String pw = pass.getText().toString();
+                if (!pw.isEmpty()) Settings.setPassword(this, pw);
+                pass.setText("");
+                boolean ready = Settings.hasPassword(this);
+                st.setText(ready ? "✓ บันทึกแล้ว" : "⚠ ยังไม่ได้ตั้งรหัสผ่าน");
+                st.setTextColor(ready ? 0xFF2FB36B : 0xFFE5484D);
+                Toast.makeText(this, "บันทึกแล้ว", Toast.LENGTH_SHORT).show();
+            });
+            authDetail.addView(save);
+            if (!Settings.hasPassword(this)) {
+                st.setText("⚠ ยังไม่ได้ตั้งรหัสผ่าน — ตั้งก่อนเพื่อให้ล็อกอินได้");
+                st.setTextColor(0xFFE5484D);
+            }
+            authDetail.addView(st);
+        } else {
+            authDetail.addView(text("⚠ ไม่ต้องล็อกอิน: ใครก็ตามในเครือข่ายเดียวกันเข้าถึงไฟล์ได้ทันที", 13, 0xFFB5651D, false));
+        }
+    }
+
+    private void applyAuthModeAfter(Runnable r) {
+        r.run();
+        applyAuthMode();
+    }
 
     private void applyKeepScreen() {
         if (Settings.keepScreenOn(this)) getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -247,10 +316,6 @@ public class MainActivity extends Activity {
         }
         urlHost.setAlpha(on ? 1f : 0.4f);
         urlIp.setAlpha(on ? 1f : 0.4f);
-
-        boolean pinOn = Settings.pinEnabled(this);
-        pinView.setText(pinOn ? Settings.pin(this) : "ไม่ใช้ PIN");
-        pinView.setTextSize(pinOn ? 34 : 18);
 
         boolean access = hasFileAccess();
         permNote.setText(access ? "✓ ได้รับสิทธิ์เข้าถึงไฟล์แล้ว" : "ยังไม่ได้รับสิทธิ์เข้าถึงไฟล์ หน้าเว็บจะเปิดโฟลเดอร์ไม่ได้");
